@@ -1,0 +1,358 @@
+import { Tabs } from 'expo-router';
+import { View, Text, StyleSheet, Platform } from 'react-native';
+import { Home, UsersRound, UserRound, MessageSquare, BarChart3, BriefcaseBusiness } from 'lucide-react-native';
+import { useConversations } from '@/hooks/useChat';
+import { COLORS, BORDER_RADIUS, FONT_SIZES, FONT_WEIGHTS, FONT_FAMILY } from '@/constants/theme';
+
+function ChatTabIcon({ size, color }: { size: number; color: string }) {
+  const { totalUnread } = useConversations();
+
+  return (
+    <View style={{ position: 'relative' }}>
+      <MessageSquare size={24} color={color} strokeWidth={2.5} />
+      {totalUnread > 0 && (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>
+            {totalUnread > 99 ? '99+' : totalUnread}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+export default function TabLayout() {
+  return (
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: COLORS.primary,
+        tabBarInactiveTintColor: COLORS.textSecondary,
+        tabBarStyle: {
+          backgroundColor: COLORS.background,
+          borderTopColor: COLORS.border,
+          borderTopWidth: 1,
+          paddingTop: Platform.OS === 'ios' ? 8 : 4,
+          paddingBottom: Platform.OS === 'ios' ? 20 : 8,
+          height: Platform.OS === 'ios' ? 85 : 65,
+          elevation: 8,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
+        },
+        tabBarLabelStyle: {
+          fontSize: FONT_SIZES.xs,
+          fontFamily: FONT_FAMILY.bodyMedium,
+          fontWeight: FONT_WEIGHTS.medium.toString(),
+          marginTop: 2,
+          marginBottom: 0,
+          paddingBottom: 0,
+          lineHeight: 14,
+          textTransform: 'none',
+        },
+        tabBarIconStyle: {
+          marginTop: 4,
+          marginBottom: 0,
+        },
+        tabBarItemStyle: {
+          paddingVertical: 4,
+        },
+        tabBarActiveTintColor: COLORS.primary,
+        tabBarInactiveTintColor: COLORS.textSecondary,
+        tabBarShowLabel: true,
+        tabBarHideOnKeyboard: true,
+      }}>
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Home',
+          tabBarLabel: 'Home',
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconContainer}>
+              <Home 
+                size={24} 
+                color={focused ? COLORS.primary : color || COLORS.textSecondary} 
+                strokeWidth={2.5} 
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="founder-dashboard"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="investor-dashboard"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="expert-dashboard"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="network"
+        options={{
+          title: 'Network',
+          tabBarLabel: 'Network',
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconContainer}>
+              <UsersRound 
+                size={24} 
+                color={focused ? COLORS.primary : color || COLORS.textSecondary} 
+                strokeWidth={2.5} 
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: 'Chat',
+          tabBarLabel: 'Chat',
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconContainer}>
+              <ChatTabIcon 
+                size={24} 
+                color={focused ? COLORS.primary : color || COLORS.textSecondary} 
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="funding"
+        options={{
+          title: 'Funding',
+          tabBarLabel: 'Funding',
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconContainer}>
+              <BarChart3 
+                size={24} 
+                color={focused ? COLORS.primary : color || COLORS.textSecondary} 
+                strokeWidth={2.5} 
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="opportunities"
+        options={{
+          title: 'Opportunities',
+          tabBarLabel: 'Opportunities',
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconContainer}>
+              <BriefcaseBusiness 
+                size={24} 
+                color={focused ? COLORS.primary : color || COLORS.textSecondary} 
+                strokeWidth={2.5} 
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          tabBarLabel: 'Profile',
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconContainer}>
+              <UserRound 
+                size={24} 
+                color={focused ? COLORS.primary : color || COLORS.textSecondary} 
+                strokeWidth={2.5} 
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="edit-profile"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="pitch-upload"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="pitch-video"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="webinars"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="documents"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="feed"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="reviews"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="payment"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="subscription"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="startup-profile"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="funding-status"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="mentorship"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="notifications"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="expert-profile"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="expert-sessions"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="expert-analytics"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="host-webinar"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="investor-profile"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="startup-discovery"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="help"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="security"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="schedule-meeting"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="request-mentorship"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="sessions"
+        options={{
+          href: null,
+        }}
+      />
+    </Tabs>
+  );
+}
+
+const styles = StyleSheet.create({
+  iconContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 24,
+    height: 24,
+  },
+  badge: {
+    position: 'absolute',
+    top: -6,
+    right: -10,
+    minWidth: 18,
+    height: 18,
+    borderRadius: BORDER_RADIUS.full,
+    backgroundColor: COLORS.error,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    zIndex: 1,
+  },
+  badgeText: {
+    fontSize: FONT_SIZES.xs,
+    fontWeight: FONT_WEIGHTS.bold,
+    color: COLORS.background,
+  },
+});
