@@ -35,7 +35,7 @@ import {
   Plus,
   Globe,
 } from 'lucide-react-native';
-import { MOCK_PROFILE } from '@/hooks/useMockData';
+import { useAuth } from '@/contexts/AuthContext';
 
 const INDUSTRIES = [
   { label: 'Select industry', value: '' },
@@ -60,7 +60,7 @@ const SKILLS_OPTIONS = [
 ];
 
 export default function ExpertProfileScreen() {
-  const profile = MOCK_PROFILE;
+  const { profile } = useAuth();
   const [experience, setExperience] = useState('10+ years in startup ecosystem');
   const [specialization, setSpecialization] = useState('Product Strategy, Go-to-Market');
   const [portfolio, setPortfolio] = useState('Helped 50+ startups scale from seed to Series A');

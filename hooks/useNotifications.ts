@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 
 export interface Notification {
   id: string;
@@ -12,77 +13,125 @@ export interface Notification {
   metadata?: Record<string, any>;
 }
 
-// Mock notifications data
-const MOCK_NOTIFICATIONS: Notification[] = [
-  {
-    id: '1',
-    type: 'funding',
-    title: 'New Funding Opportunity',
-    message: 'An investor has shown interest in your startup',
-    timestamp: new Date(Date.now() - 1000 * 60 * 5),
-    read: false,
-    actionUrl: '/(tabs)/funding-status',
-  },
-  {
-    id: '2',
-    type: 'session',
-    title: 'Mentorship Session Scheduled',
-    message: 'Your session with John Doe is tomorrow at 2 PM',
-    timestamp: new Date(Date.now() - 1000 * 60 * 30),
-    read: false,
-    actionUrl: '/(tabs)/mentorship',
-  },
-  {
-    id: '3',
-    type: 'review',
-    title: 'New Review Received',
-    message: 'You received a 5-star review from Jane Smith',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2),
-    read: true,
-    actionUrl: '/(tabs)/reviews',
-  },
-  {
-    id: '4',
-    type: 'connection',
-    title: 'New Connection Request',
-    message: 'Sarah Johnson wants to connect with you',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 5),
-    read: false,
-    actionUrl: '/(tabs)/network',
-  },
-  {
-    id: '5',
-    type: 'system',
-    title: 'Platform Update',
-    message: 'New features are now available. Check them out!',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24),
-    read: true,
-  },
-];
-
 export function useNotifications() {
-  const { profile } = useAuth();
-  const [notifications, setNotifications] = useState<Notification[]>(MOCK_NOTIFICATIONS);
+  const { user, profile } = useAuth();
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const fetchNotifications = useCallback(async () => {
+    if (!user?.id) return;
+
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('profile_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+
+      const formatted: Notification[] = (data || []).map(n => ({
+        id: n.id,
+        type: n.type || 'system',
+        title: n.title || '',
+        message: n.body || '',
+        timestamp: new Date(n.created_at),
+        read: n.read || false,
+        actionUrl: n.data?.actionUrl,
+        metadata: n.data,
+      }));
+
+      setNotifications(formatted);
+    } catch (err) {
+      console.error('Error fetching notifications:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchNotifications();
+
+    // Set up realtime subscription
+    if (user?.id) {
+      const channel = supabase
+        .channel(`notifications:${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter: `profile_id=eq.${user.id}`,
+          },
+          () => {
+            fetchNotifications();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [user?.id, fetchNotifications]);
 
   // Calculate unread count
   const unreadCount = notifications.filter(n => !n.read).length;
 
   // Mark notification as read
-  const markAsRead = useCallback((id: string) => {
-    setNotifications(prev =>
-      prev.map(n => (n.id === id ? { ...n, read: true } : n))
-    );
+  const markAsRead = useCallback(async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setNotifications(prev =>
+        prev.map(n => (n.id === id ? { ...n, read: true } : n))
+      );
+    } catch (err) {
+      console.error('Error marking notification as read:', err);
+    }
   }, []);
 
   // Mark all as read
-  const markAllAsRead = useCallback(() => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-  }, []);
+  const markAllAsRead = useCallback(async () => {
+    if (!user?.id) return;
+
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('profile_id', user.id)
+        .eq('read', false);
+
+      if (error) throw error;
+
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    } catch (err) {
+      console.error('Error marking all as read:', err);
+    }
+  }, [user?.id]);
 
   // Delete notification
-  const deleteNotification = useCallback((id: string) => {
-    setNotifications(prev => prev.filter(n => n.id !== id));
+  const deleteNotification = useCallback(async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    } catch (err) {
+      console.error('Error deleting notification:', err);
+    }
   }, []);
 
   // Get notifications by type
@@ -90,14 +139,10 @@ export function useNotifications() {
     return notifications.filter(n => n.type === type);
   }, [notifications]);
 
-  // Refresh notifications (simulate real-time update)
+  // Refresh notifications
   const refresh = useCallback(async () => {
-    setLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 500));
-    // In real app, fetch from API
-    setLoading(false);
-  }, []);
+    await fetchNotifications();
+  }, [fetchNotifications]);
 
   return {
     notifications,

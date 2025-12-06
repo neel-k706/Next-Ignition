@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,10 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Platform,
 } from 'react-native';
-// import { Camera } from 'expo-camera';
+import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import { Video as ExpoVideo } from 'expo-av';
 import { router } from 'expo-router';
 import { Button } from '@/components/Button';
 import {
@@ -21,67 +23,229 @@ import {
   TYPOGRAPHY,
 } from '@/constants/theme';
 import { Video, Play, Pause, Upload, CheckCircle, Clock } from 'lucide-react-native';
+import { usePitchMaterials } from '@/hooks/usePitchMaterials';
+import { useAuth } from '@/contexts/AuthContext';
+import { showAlert } from '@/utils/platformAlert';
+import { useMicrophonePermissions } from 'expo-camera';
 
 export default function PitchVideoScreen() {
+  const { profile, user } = useAuth();
+  const { uploadPitchMaterial, refresh } = usePitchMaterials();
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [microphonePermission, requestMicrophonePermission] = useMicrophonePermissions();
   const [recording, setRecording] = useState(false);
   const [recordedVideo, setRecordedVideo] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [timeElapsed, setTimeElapsed] = useState(0);
-  const cameraRef = useRef<any>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [visibility, setVisibility] = useState<'public' | 'private'>('private');
+  const cameraRef = useRef<CameraView>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingRef = useRef(false);
 
   const MAX_DURATION = 120; // 2 minutes
 
+  useEffect(() => {
+    // Request permissions on mount
+    const requestPermissions = async () => {
+      if (!cameraPermission?.granted) {
+        await requestCameraPermission();
+      }
+      if (!microphonePermission?.granted) {
+        await requestMicrophonePermission();
+      }
+    };
+    requestPermissions();
+  }, []);
+
+  useEffect(() => {
+    // Cleanup timer on unmount
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, []);
+
   const startRecording = async () => {
+    if (!cameraRef.current) {
+      showAlert('Error', 'Camera not ready');
+      return;
+    }
+
+    if (recordingRef.current) {
+      console.log('Already recording, ignoring start');
+      return;
+    }
+
     try {
-      // Simulate recording for now
-      // In production, use expo-camera
+      console.log('Starting recording...');
+      recordingRef.current = true;
       setRecording(true);
+      setTimeElapsed(0);
+
+      // Start timer
       timerRef.current = setInterval(() => {
         setTimeElapsed((prev) => {
-          if (prev >= MAX_DURATION) {
+          const newTime = prev + 1;
+          if (newTime >= MAX_DURATION) {
+            console.log('Max duration reached, stopping...');
             stopRecording();
             return MAX_DURATION;
           }
-          return prev + 1;
+          return newTime;
         });
       }, 1000);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to record video');
+
+      // Start recording - this is non-blocking, it returns a promise that resolves when stopped
+      console.log('Calling recordAsync...');
+      cameraRef.current.recordAsync({
+        maxDuration: MAX_DURATION,
+      }).then((video) => {
+        console.log('Recording completed, video:', video);
+
+        // This runs after recording stops
+        recordingRef.current = false;
+        setRecording(false);
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+
+        if (video?.uri) {
+          console.log('Video URI received:', video.uri);
+          setRecordedVideo(video.uri);
+        } else {
+          console.log('No video URI received');
+        }
+      }).catch((error: any) => {
+        console.error('Recording error:', error);
+        recordingRef.current = false;
+        setRecording(false);
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        
+        // Only show error if it's not a cancellation
+        if (error.message && !error.message.includes('cancelled') && !error.message.includes('recording')) {
+          showAlert('Error', 'Failed to record video: ' + error.message);
+        }
+      });
+
+      console.log('Recording started successfully');
+    } catch (error: any) {
+      console.error('Start recording error:', error);
+      recordingRef.current = false;
       setRecording(false);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      showAlert('Error', 'Failed to start recording: ' + error.message);
     }
   };
 
-  const stopRecording = () => {
-    // Simulate stop recording
-    setRecording(false);
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
+  const stopRecording = async () => {
+    if (!recordingRef.current) {
+      console.log('Not recording, ignoring stop');
+      return;
     }
-    // Simulate video recorded
-    setTimeout(() => {
-      setRecordedVideo('file://recorded-video.mp4');
-    }, 500);
+
+    if (cameraRef.current) {
+      try {
+        console.log('Stopping recording...');
+        // This triggers the recordAsync promise to resolve
+        cameraRef.current.stopRecording();
+      } catch (error) {
+        console.error('Stop recording error:', error);
+        // Ensure state is cleaned up even on error
+        recordingRef.current = false;
+        setRecording(false);
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+      }
+    }
   };
 
-  const handleStart = () => {
+  const handleStart = async () => {
+    if (!cameraPermission?.granted) {
+      showAlert('Permission Required', 'Please grant camera permission to record videos');
+      await requestCameraPermission();
+      return;
+    }
+
+    if (!microphonePermission?.granted) {
+      showAlert('Permission Required', 'Please grant microphone permission to record videos with audio');
+      await requestMicrophonePermission();
+      return;
+    }
+    
+    if (!cameraReady) {
+      showAlert('Camera Not Ready', 'Please wait for camera to initialize');
+      return;
+    }
+
     startRecording();
   };
 
   const handleUpload = async () => {
     if (!recordedVideo) {
-      Alert.alert('Error', 'Please record a video first');
+      showAlert('Error', 'Please record a video first');
       return;
     }
 
-    setUploading(true);
-    // Simulate upload
-    setTimeout(() => {
+    if (!user?.id) {
+      showAlert('Error', 'User not authenticated');
+      return;
+    }
+
+    try {
+      setUploading(true);
+
+      console.log('Uploading video from URI:', recordedVideo);
+
+      const fileName = `pitch-video-${Date.now()}.mp4`;
+
+      // Upload video using usePitchMaterials hook - pass URI directly
+      const result = await uploadPitchMaterial(
+        'video',
+        recordedVideo,
+        fileName,
+        visibility
+      );
+
+      if (result.success) {
+        console.log('Upload successful');
+        showAlert(
+          'Success',
+          'Pitch video uploaded successfully!',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                refresh();
+                router.back();
+              },
+            },
+          ]
+        );
+      } else {
+        throw new Error(result.error || 'Upload failed');
+      }
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      showAlert('Error', error.message || 'Failed to upload video. Please try again.');
+    } finally {
       setUploading(false);
-      Alert.alert('Success', 'Pitch video uploaded successfully!', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
-    }, 2000);
+    }
+  };
+
+  const handleRetake = () => {
+    setRecordedVideo(null);
+    setTimeElapsed(0);
   };
 
   const formatTime = (seconds: number) => {
@@ -89,6 +253,39 @@ export default function PitchVideoScreen() {
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Show permission request if not granted
+  if (!cameraPermission) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.permissionContainer}>
+          <Text style={styles.permissionText}>Checking permissions...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!cameraPermission.granted || !microphonePermission?.granted) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.permissionContainer}>
+          <Video size={64} color={COLORS.primary} strokeWidth={2} />
+          <Text style={styles.permissionTitle}>Permissions Required</Text>
+          <Text style={styles.permissionDescription}>
+            We need access to your camera and microphone to record your pitch video
+          </Text>
+          <Button
+            title="Grant Permissions"
+            onPress={async () => {
+              await requestCameraPermission();
+              await requestMicrophonePermission();
+            }}
+            style={styles.permissionButton}
+          />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -106,27 +303,31 @@ export default function PitchVideoScreen() {
           <Text style={styles.sectionTitle}>Video Recording</Text>
           <View style={styles.cameraContainer}>
             {!recordedVideo ? (
-              <View style={styles.cameraPlaceholder}>
-                <Video size={48} color={COLORS.textSecondary} strokeWidth={2} />
-                <Text style={styles.cameraPlaceholderText}>Camera Preview</Text>
-                <Text style={styles.cameraHint}>
-                  Tap record to start your 2-minute pitch
-                </Text>
-              </View>
+              <>
+                <CameraView
+                  ref={cameraRef}
+                  style={styles.camera}
+                  facing="front"
+                  mode="video"
+                  onCameraReady={() => setCameraReady(true)}
+                />
+                {recording && (
+                  <View style={styles.recordingOverlay}>
+                    <View style={styles.recordingIndicator}>
+                      <View style={styles.recordingDot} />
+                      <Text style={styles.recordingTime}>{formatTime(timeElapsed)}</Text>
+                    </View>
+                  </View>
+                )}
+              </>
             ) : (
-              <View style={styles.videoPreview}>
-                <Play size={32} color={COLORS.background} strokeWidth={2} />
-                <Text style={styles.videoPreviewText}>Video Recorded</Text>
-              </View>
-            )}
-
-            {recording && (
-              <View style={styles.recordingOverlay}>
-                <View style={styles.recordingIndicator}>
-                  <View style={styles.recordingDot} />
-                  <Text style={styles.recordingTime}>{formatTime(timeElapsed)}</Text>
-                </View>
-              </View>
+              <ExpoVideo
+                source={{ uri: recordedVideo }}
+                style={styles.camera}
+                useNativeControls
+                resizeMode="contain"
+                isLooping={false}
+              />
             )}
           </View>
 
@@ -153,25 +354,58 @@ export default function PitchVideoScreen() {
           )}
 
           {recordedVideo && (
-            <View style={styles.videoActions}>
-              <TouchableOpacity
-                style={styles.retakeButton}
-                onPress={() => {
-                  setRecordedVideo(null);
-                  setTimeElapsed(0);
-                }}
-                activeOpacity={0.7}>
-                <Text style={styles.retakeButtonText}>Retake</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.playButton}
-                onPress={() => {
-                  // Play video
-                }}
-                activeOpacity={0.7}>
-                <Play size={20} color={COLORS.primary} strokeWidth={2} />
-                <Text style={styles.playButtonText}>Preview</Text>
-              </TouchableOpacity>
+            <>
+              <Text style={styles.previewLabel}>Preview your video above</Text>
+              <View style={styles.videoActions}>
+                <TouchableOpacity
+                  style={styles.retakeButton}
+                  onPress={handleRetake}
+                  activeOpacity={0.7}>
+                  <Text style={styles.retakeButtonText}>Retake</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {recordedVideo && (
+            <View style={styles.visibilityCard}>
+              <Text style={styles.visibilityTitle}>Who can see this video?</Text>
+              <View style={styles.visibilityOptions}>
+                <TouchableOpacity
+                  style={[
+                    styles.visibilityOption,
+                    visibility === 'public' && styles.visibilityOptionActive,
+                  ]}
+                  onPress={() => setVisibility('public')}
+                  activeOpacity={0.7}>
+                  <Text
+                    style={[
+                      styles.visibilityOptionText,
+                      visibility === 'public' && styles.visibilityOptionTextActive,
+                    ]}>
+                    Public
+                  </Text>
+                  <Text style={styles.visibilityOptionHint}>
+                    Visible to all investors
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.visibilityOption,
+                    visibility === 'private' && styles.visibilityOptionActive,
+                  ]}
+                  onPress={() => setVisibility('private')}
+                  activeOpacity={0.7}>
+                  <Text
+                    style={[
+                      styles.visibilityOptionText,
+                      visibility === 'private' && styles.visibilityOptionTextActive,
+                    ]}>
+                    Private
+                  </Text>
+                  <Text style={styles.visibilityOptionHint}>Only you can see</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
         </View>
@@ -241,6 +475,31 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.body,
     color: COLORS.textSecondary,
   },
+  permissionContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.xl,
+    gap: SPACING.lg,
+  },
+  permissionText: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary,
+  },
+  permissionTitle: {
+    ...TYPOGRAPHY.title,
+    fontFamily: FONT_FAMILY.displayBold,
+    color: COLORS.text,
+    textAlign: 'center',
+  },
+  permissionDescription: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
+  permissionButton: {
+    minWidth: 200,
+  },
   section: {
     gap: SPACING.md,
   },
@@ -257,6 +516,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
     ...SHADOWS.md,
+  },
+  camera: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
   },
   cameraPlaceholder: {
     flex: 1,
@@ -351,6 +615,13 @@ const styles = StyleSheet.create({
     color: COLORS.background,
     fontFamily: FONT_FAMILY.bodyBold,
   },
+  previewLabel: {
+    ...TYPOGRAPHY.bodyStrong,
+    color: COLORS.primary,
+    fontFamily: FONT_FAMILY.bodyBold,
+    textAlign: 'center',
+    marginTop: SPACING.sm,
+  },
   videoActions: {
     flexDirection: 'row',
     gap: SPACING.md,
@@ -383,6 +654,49 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.bodyStrong,
     color: COLORS.background,
     fontFamily: FONT_FAMILY.bodyBold,
+  },
+  visibilityCard: {
+    padding: SPACING.lg,
+    backgroundColor: COLORS.surface,
+    borderRadius: BORDER_RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOWS.sm,
+    gap: SPACING.md,
+  },
+  visibilityTitle: {
+    ...TYPOGRAPHY.title,
+    fontFamily: FONT_FAMILY.displayMedium,
+    color: COLORS.text,
+  },
+  visibilityOptions: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+  },
+  visibilityOption: {
+    flex: 1,
+    padding: SPACING.md,
+    backgroundColor: COLORS.background,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  visibilityOptionActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primaryLight,
+  },
+  visibilityOptionText: {
+    ...TYPOGRAPHY.bodyStrong,
+    fontFamily: FONT_FAMILY.bodyBold,
+    color: COLORS.text,
+    marginBottom: SPACING.xs,
+  },
+  visibilityOptionTextActive: {
+    color: COLORS.primary,
+  },
+  visibilityOptionHint: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textSecondary,
   },
   tipsCard: {
     padding: SPACING.lg,

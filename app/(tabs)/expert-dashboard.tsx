@@ -33,7 +33,7 @@ import {
   UserRound,
   Bell,
 } from 'lucide-react-native';
-import { MOCK_PROFILE } from '@/hooks/useMockData';
+import { useAuth } from '@/contexts/AuthContext';
 
 const MENTORSHIP_REQUESTS = [
   {
@@ -55,7 +55,7 @@ const MENTORSHIP_REQUESTS = [
 ];
 
 export default function ExpertDashboard() {
-  const profile = MOCK_PROFILE;
+  const { profile } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = async () => {
@@ -468,7 +468,8 @@ const styles = StyleSheet.create({
   actionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: SPACING.md,
+    justifyContent: 'space-between',
+    marginHorizontal: 0,
   },
   actionCard: {
     width: '48%',
@@ -480,6 +481,7 @@ const styles = StyleSheet.create({
     ...SHADOWS.sm,
     alignItems: 'center',
     gap: SPACING.sm,
+    marginBottom: SPACING.md,
   },
   actionTitle: {
     ...TYPOGRAPHY.bodyStrong,

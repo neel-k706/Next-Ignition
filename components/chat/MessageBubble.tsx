@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { COLORS, SPACING, FONT_SIZES, FONT_WEIGHTS, BORDER_RADIUS } from '@/constants/theme';
 import { Message } from '@/types/chat';
-import { MOCK_USER_ID } from '@/hooks/useMockData';
+import { useAuth } from '@/contexts/AuthContext';
 import { Check, CheckCheck } from 'lucide-react-native';
 
 interface MessageBubbleProps {
@@ -10,7 +10,8 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
-  const isOwnMessage = message.sender_id === MOCK_USER_ID;
+  const { user } = useAuth();
+  const isOwnMessage = message.sender_id === user?.id;
   const time = new Date(message.created_at).toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,14 @@ import {
   TouchableOpacity,
   Switch,
   Alert,
+  ActivityIndicator,
+  Linking,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { Input } from '@/components/Input';
 import { Button } from '@/components/Button';
 import { Picker } from '@/components/Picker';
@@ -32,11 +37,17 @@ import {
   Download,
   FileText,
   Video,
-  Link,
+  Link as LinkIcon,
   CheckCircle,
   TrendingUp,
+  Trash2,
+  ExternalLink,
 } from 'lucide-react-native';
-import { MOCK_PROFILE } from '@/hooks/useMockData';
+import { useAuth } from '@/contexts/AuthContext';
+import { useSubscription } from '@/hooks/useSubscription';
+import { usePitchMaterials } from '@/hooks/usePitchMaterials';
+import { supabase } from '@/lib/supabase';
+import { showAlert } from '@/utils/platformAlert';
 
 const STAGES = [
   { label: 'Select stage', value: '' },
@@ -55,17 +66,133 @@ const INDUSTRIES = [
   { label: 'E-commerce', value: 'ecommerce' },
 ];
 
+type StartupProfileRecord = {
+  id: string;
+  owner_id: string;
+  name: string;
+  description: string | null;
+  industry: string | null;
+  stage: string | null;
+  website: string | null;
+  is_public: boolean;
+  pitch_deck_url: string | null;
+  pitch_video_url: string | null;
+};
+
 export default function StartupProfileScreen() {
-  const profile = MOCK_PROFILE;
-  const [startupName, setStartupName] = useState(profile?.venture_name || '');
-  const [description, setDescription] = useState(profile?.venture_description || '');
-  const [stage, setStage] = useState(profile?.venture_stage || '');
-  const [industry, setIndustry] = useState(profile?.venture_industry || '');
+  const { profile, refreshProfile } = useAuth();
+  const { permissions, currentPlan } = useSubscription();
+  const { pitchDecks, pitchVideos, deletePitchMaterial, loading: pitchLoading, refresh: refreshPitchMaterials } = usePitchMaterials();
+  
+  const [startupName, setStartupName] = useState('');
+  const [description, setDescription] = useState('');
+  const [stage, setStage] = useState('');
+  const [industry, setIndustry] = useState('');
   const [website, setWebsite] = useState('');
   const [isPublic, setIsPublic] = useState(true);
-  const [hasPitchDeck, setHasPitchDeck] = useState(false);
-  const [hasPitchVideo, setHasPitchVideo] = useState(false);
+  const [loadingProfile, setLoadingProfile] = useState(true);
   const [saving, setSaving] = useState(false);
+  
+  // Social links state
+  const [linkedinUrl, setLinkedinUrl] = useState('');
+  const [twitterUrl, setTwitterUrl] = useState('');
+  const [websiteUrl, setWebsiteUrl] = useState('');
+
+  const canUploadPitchAssets = permissions.canUploadPitchDeck || permissions.canRecordPitchVideo;
+
+  // Extract primitive values from profile to prevent infinite re-renders
+  const profileId = profile?.id;
+  const ventureName = profile?.venture_name;
+  const ventureDescription = profile?.venture_description;
+  const ventureStage = profile?.venture_stage;
+  const ventureIndustry = profile?.venture_industry;
+
+  // Use useFocusEffect to refresh data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      const loadData = async () => {
+        if (!profileId) {
+          setLoadingProfile(false);
+          return;
+        }
+        
+        if (!isActive) return;
+        
+        setLoadingProfile(true);
+        try {
+          // Refresh pitch materials to show newly uploaded files
+          await refreshPitchMaterials();
+
+          // Load startup profile
+          const { data, error } = await supabase
+            .from('startup_profiles')
+            .select('*')
+            .eq('owner_id', profileId)
+            .maybeSingle<StartupProfileRecord>();
+
+          if (error && error.code !== 'PGRST116') {
+            throw error;
+          }
+
+          // Load user profile for social links
+          const { data: profileData, error: profileError } = await supabase
+            .from('profiles')
+            .select('linkedin_url, twitter_url, website_url')
+            .eq('id', profileId)
+            .single();
+
+          if (profileError) {
+            console.error('Error loading profile data:', profileError);
+          }
+
+          if (!isActive) return; // Check again before updating state
+
+          // Update startup profile fields
+          if (data) {
+            setStartupName(data.name || '');
+            setDescription(data.description || '');
+            setStage(data.stage || '');
+            setIndustry(data.industry || '');
+            setWebsite(data.website || '');
+            setIsPublic(data.is_public ?? true);
+          } else {
+            // Fallback to profile data if no startup profile exists
+            setStartupName(ventureName || '');
+            setDescription(ventureDescription || '');
+            setStage(ventureStage || '');
+            setIndustry(ventureIndustry || '');
+          }
+
+          // Update social links
+          if (profileData) {
+            setLinkedinUrl(profileData.linkedin_url || '');
+            setTwitterUrl(profileData.twitter_url || '');
+            setWebsiteUrl(profileData.website_url || '');
+          }
+        } catch (err) {
+          console.error('Error loading startup profile', err);
+          if (isActive) {
+            Alert.alert('Error', 'Unable to load startup profile. Please try again.');
+          }
+        } finally {
+          if (isActive) {
+            setLoadingProfile(false);
+          }
+        }
+      };
+
+      loadData();
+
+      return () => {
+        isActive = false;
+      };
+    }, [profileId, ventureName, ventureDescription, ventureStage, ventureIndustry, refreshPitchMaterials])
+  );
+
+  const hasPitchDeck = pitchDecks.length > 0;
+  const hasPitchVideo = pitchVideos.length > 0;
 
   const profileCompleteness = () => {
     let completed = 0;
@@ -77,32 +204,397 @@ export default function StartupProfileScreen() {
     if (website) completed++;
     if (hasPitchDeck) completed++;
     if (hasPitchVideo) completed++;
-    if (profile?.linkedin_url || profile?.twitter_url || profile?.website_url) completed++;
+    if (linkedinUrl || twitterUrl || websiteUrl) completed++;
     return Math.round((completed / total) * 100);
   };
 
   const handleSave = async () => {
+    if (!profileId) {
+      Alert.alert('Error', 'No user profile found. Please log in again.');
+      return;
+    }
+    
+    // Validation
+    if (!startupName.trim()) {
+      Alert.alert('Required Field', 'Please enter your startup name before saving.');
+      return;
+    }
+
+    if (!industry || industry === '') {
+      Alert.alert('Required Field', 'Please select an industry.');
+      return;
+    }
+
+    if (!stage || stage === '') {
+      Alert.alert('Required Field', 'Please select your current stage.');
+      return;
+    }
+
     setSaving(true);
-    setTimeout(() => {
-      setSaving(false);
+    try {
+      // Get the latest pitch deck and video URLs from pitch_materials
+      const latestPitchDeck = pitchDecks.length > 0 ? pitchDecks[0] : null;
+      const latestPitchVideo = pitchVideos.length > 0 ? pitchVideos[0] : null;
+
+      // Save startup profile to startup_profiles table
+      const startupPayload = {
+        owner_id: profileId,
+        name: startupName.trim(),
+        description: description.trim() || null,
+        industry: industry,
+        stage: stage,
+        website: website.trim() || null,
+        is_public: isPublic,
+        pitch_deck_url: latestPitchDeck?.url || null,
+        pitch_deck_uploaded_at: latestPitchDeck?.created_at || null,
+        pitch_video_url: latestPitchVideo?.url || null,
+        pitch_video_uploaded_at: latestPitchVideo?.created_at || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: startupError } = await supabase
+        .from('startup_profiles')
+        .upsert(startupPayload, { onConflict: 'owner_id' })
+        .select()
+        .single<StartupProfileRecord>();
+
+      if (startupError) throw startupError;
+
+      // Save social links to profiles table
+      const profilePayload = {
+        linkedin_url: linkedinUrl.trim() || null,
+        twitter_url: twitterUrl.trim() || null,
+        website_url: websiteUrl.trim() || null,
+      };
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update(profilePayload)
+        .eq('id', profileId);
+
+      if (profileError) throw profileError;
+
       Alert.alert('Success', 'Startup profile updated successfully!');
-    }, 1000);
+      
+      // Refresh auth profile to sync updated data
+      await refreshProfile();
+    } catch (err: any) {
+      console.error('Error saving startup profile', err);
+      Alert.alert('Error', err.message || 'Unable to save your startup profile. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleShare = () => {
     Alert.alert('Share Profile', 'Choose sharing option', [
       { text: 'Copy Link', onPress: () => alert('Link copied!') },
-      { text: 'Export PDF', onPress: () => alert('Generating PDF...') },
+      { text: 'Export PDF', onPress: handleExportPDF },
       { text: 'Cancel', style: 'cancel' },
     ]);
   };
+
+  const handleExportPDF = async () => {
+    try {
+      // Generate HTML content for the PDF
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${startupName || 'Startup Profile'}</title>
+          <style>
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+              line-height: 1.6;
+              color: #1f2937;
+              padding: 40px;
+              background: #ffffff;
+            }
+            .header {
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              color: white;
+              padding: 30px;
+              border-radius: 12px;
+              margin-bottom: 30px;
+            }
+            .header h1 {
+              font-size: 32px;
+              font-weight: 700;
+              margin-bottom: 10px;
+            }
+            .header p {
+              font-size: 16px;
+              opacity: 0.9;
+            }
+            .section {
+              background: #f9fafb;
+              border: 1px solid #e5e7eb;
+              border-radius: 8px;
+              padding: 20px;
+              margin-bottom: 20px;
+            }
+            .section-title {
+              font-size: 20px;
+              font-weight: 600;
+              color: #667eea;
+              margin-bottom: 15px;
+              display: flex;
+              align-items: center;
+            }
+            .field {
+              margin-bottom: 15px;
+            }
+            .field-label {
+              font-size: 12px;
+              font-weight: 600;
+              text-transform: uppercase;
+              color: #6b7280;
+              margin-bottom: 5px;
+            }
+            .field-value {
+              font-size: 16px;
+              color: #1f2937;
+              word-wrap: break-word;
+            }
+            .badge {
+              display: inline-block;
+              padding: 4px 12px;
+              border-radius: 12px;
+              font-size: 14px;
+              font-weight: 500;
+            }
+            .badge-public {
+              background: #d1fae5;
+              color: #065f46;
+            }
+            .badge-private {
+              background: #fee2e2;
+              color: #991b1b;
+            }
+            .footer {
+              text-align: center;
+              margin-top: 40px;
+              padding-top: 20px;
+              border-top: 2px solid #e5e7eb;
+              color: #6b7280;
+              font-size: 14px;
+            }
+            .materials-list {
+              list-style: none;
+              padding: 0;
+            }
+            .materials-list li {
+              background: white;
+              padding: 12px;
+              border-radius: 6px;
+              margin-bottom: 8px;
+              border: 1px solid #e5e7eb;
+            }
+            .materials-list li strong {
+              color: #667eea;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${startupName || 'Startup Profile'}</h1>
+            <p>${profile?.full_name || 'Founder'} • Generated on ${new Date().toLocaleDateString()}</p>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Basic Information</div>
+            <div class="field">
+              <div class="field-label">Startup Name</div>
+              <div class="field-value">${startupName || 'Not provided'}</div>
+            </div>
+            <div class="field">
+              <div class="field-label">Industry</div>
+              <div class="field-value">${INDUSTRIES.find(i => i.value === industry)?.label || 'Not provided'}</div>
+            </div>
+            <div class="field">
+              <div class="field-label">Stage</div>
+              <div class="field-value">${STAGES.find(s => s.value === stage)?.label || 'Not provided'}</div>
+            </div>
+            <div class="field">
+              <div class="field-label">Website</div>
+              <div class="field-value">${website || 'Not provided'}</div>
+            </div>
+            <div class="field">
+              <div class="field-label">Visibility</div>
+              <div class="field-value">
+                <span class="badge ${isPublic ? 'badge-public' : 'badge-private'}">
+                  ${isPublic ? 'Public' : 'Private'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Description</div>
+            <div class="field-value">${description || 'No description provided'}</div>
+          </div>
+
+          ${pitchDecks.length > 0 ? `
+          <div class="section">
+            <div class="section-title">Pitch Materials</div>
+            <ul class="materials-list">
+              ${pitchDecks.map(deck => `
+                <li>
+                  <strong>Pitch Deck:</strong> ${deck.filename || 'Untitled'}
+                  <br>
+                  <small>Uploaded: ${new Date(deck.created_at).toLocaleDateString()}</small>
+                </li>
+              `).join('')}
+              ${pitchVideos.map(video => `
+                <li>
+                  <strong>Pitch Video:</strong> ${video.filename || 'Untitled'}
+                  <br>
+                  <small>Uploaded: ${new Date(video.created_at).toLocaleDateString()}</small>
+                </li>
+              `).join('')}
+            </ul>
+          </div>
+          ` : ''}
+
+          <div class="footer">
+            <p>This profile was generated from the Next Ignition platform</p>
+            <p>${new Date().toLocaleString()}</p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      // Generate PDF
+      const { uri } = await Print.printToFileAsync({ html });
+
+      if (Platform.OS === 'web') {
+        // On web, trigger download
+        const link = document.createElement('a');
+        link.href = uri;
+        link.download = `${startupName || 'startup-profile'}.pdf`;
+        link.click();
+        showAlert('Success', 'PDF downloaded successfully!');
+      } else {
+        // On mobile, use sharing
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(uri, {
+            mimeType: 'application/pdf',
+            dialogTitle: 'Share Startup Profile',
+            UTI: 'com.adobe.pdf',
+          });
+        } else {
+          showAlert('Success', `PDF saved to: ${uri}`);
+        }
+      }
+    } catch (error: any) {
+      console.error('Error exporting PDF:', error);
+      showAlert('Error', 'Failed to export PDF. Please try again.');
+    }
+  };
+
+  const handlePitchNavigation = (route: any) => {
+    if (!canUploadPitchAssets) {
+      showAlert(
+        'Upgrade required',
+        'Pitch materials are unlocked on the Pro plan and above. Upgrade your subscription to share decks and videos.'
+      );
+      return;
+    }
+    router.push(route as any);
+  };
+
+  const handleDeletePitchDeck = async (deckId: string, storagePath: string | null) => {
+    Alert.alert(
+      'Delete Pitch Deck',
+      'Are you sure you want to delete this pitch deck? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const result = await deletePitchMaterial(deckId, storagePath);
+            if (result.success) {
+              showAlert('Success', 'Pitch deck deleted successfully');
+            } else {
+              showAlert('Error', result.error || 'Failed to delete pitch deck');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleViewPitchDeck = (url: string | null) => {
+    if (!url) {
+      showAlert('No URL', 'This pitch deck does not have a URL set.');
+      return;
+    }
+    
+    // Open URL directly - works for both external links and storage URLs
+    Linking.openURL(url).catch((err) => {
+      console.error('Error opening pitch deck:', err);
+      showAlert('Error', 'Unable to open pitch deck. Please check the URL is valid.');
+    });
+  };
+
+  const handleDeletePitchVideo = async (videoId: string, storagePath: string | null) => {
+    Alert.alert(
+      'Delete Pitch Video',
+      'Are you sure you want to delete this pitch video? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const result = await deletePitchMaterial(videoId, storagePath);
+            if (result.success) {
+              showAlert('Success', 'Pitch video deleted successfully');
+            } else {
+              showAlert('Error', result.error || 'Failed to delete pitch video');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleViewPitchVideo = (url: string | null) => {
+    if (!url) {
+      showAlert('No URL', 'This pitch video does not have a URL set.');
+      return;
+    }
+    
+    // Open URL directly - works for both external links and storage URLs
+    Linking.openURL(url).catch((err) => {
+      console.error('Error opening pitch video:', err);
+      showAlert('Error', 'Unable to open pitch video. Please check the URL is valid.');
+    });
+  };
+
+  if (loadingProfile) {
+    return (
+      <SafeAreaView style={[styles.container, styles.loadingState]}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
-        <LinearGradient colors={GRADIENTS.primary} style={styles.heroCard}>
+        <LinearGradient colors={GRADIENTS.primary as any} style={styles.heroCard}>
           <View style={styles.heroHeader}>
             <View style={styles.heroIcon}>
               <Building2 size={28} color={COLORS.background} strokeWidth={2} />
@@ -161,52 +653,122 @@ export default function StartupProfileScreen() {
             value={website}
             onChangeText={setWebsite}
             placeholder="https://yourstartup.com"
-            type="url"
           />
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Pitch Materials</Text>
+          
+          {/* Pitch Decks */}
           <View style={styles.materialsList}>
-            <TouchableOpacity
-              style={styles.materialCard}
-              onPress={() => router.push('/(tabs)/pitch-upload')}
-              activeOpacity={0.7}>
-              <View style={styles.materialIcon}>
-                <FileText size={24} color={hasPitchDeck ? COLORS.success : COLORS.primary} strokeWidth={2} />
-              </View>
-              <View style={styles.materialInfo}>
-                <Text style={styles.materialTitle}>Pitch Deck</Text>
-                <Text style={styles.materialStatus}>
-                  {hasPitchDeck ? 'Uploaded' : 'Not uploaded'}
-                </Text>
-              </View>
-              {hasPitchDeck ? (
-                <CheckCircle size={20} color={COLORS.success} strokeWidth={2} />
-              ) : (
+            {pitchDecks.length > 0 ? (
+              pitchDecks.map((deck) => (
+                <View key={deck.id} style={styles.materialCard}>
+                  <View style={styles.materialIcon}>
+                    <FileText size={24} color={COLORS.success} strokeWidth={2} />
+                  </View>
+                  <View style={styles.materialInfo}>
+                    <Text style={styles.materialTitle}>{deck.filename || 'Pitch Deck'}</Text>
+                    <Text style={styles.materialStatus}>
+                      {deck.visibility === 'public' ? 'Public' : 'Private'} • 
+                      {deck.reviewed ? ' Reviewed' : ' Pending Review'}
+                    </Text>
+                  </View>
+                  <View style={styles.materialActions}>
+                    <TouchableOpacity
+                      onPress={() => handleViewPitchDeck(deck.url)}
+                      style={styles.actionButton}>
+                      <ExternalLink size={20} color={COLORS.primary} strokeWidth={2} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleDeletePitchDeck(deck.id, deck.storage_path)}
+                      style={styles.actionButton}>
+                      <Trash2 size={20} color={COLORS.error} strokeWidth={2} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            ) : (
+              <TouchableOpacity
+                style={styles.materialCard}
+                onPress={() => handlePitchNavigation('/(tabs)/pitch-upload')}
+                activeOpacity={0.7}>
+                <View style={styles.materialIcon}>
+                  <FileText size={24} color={COLORS.primary} strokeWidth={2} />
+                </View>
+                <View style={styles.materialInfo}>
+                  <Text style={styles.materialTitle}>Pitch Deck</Text>
+                  <Text style={styles.materialStatus}>Not uploaded</Text>
+                </View>
                 <Text style={styles.uploadLink}>Upload</Text>
-              )}
-            </TouchableOpacity>
+              </TouchableOpacity>
+            )}
 
-            <TouchableOpacity
-              style={styles.materialCard}
-              onPress={() => router.push('/(tabs)/pitch-video')}
-              activeOpacity={0.7}>
-              <View style={styles.materialIcon}>
-                <Video size={24} color={hasPitchVideo ? COLORS.success : COLORS.primary} strokeWidth={2} />
-              </View>
-              <View style={styles.materialInfo}>
-                <Text style={styles.materialTitle}>Pitch Video (2 min)</Text>
-                <Text style={styles.materialStatus}>
-                  {hasPitchVideo ? 'Recorded' : 'Not recorded'}
-                </Text>
-              </View>
-              {hasPitchVideo ? (
-                <CheckCircle size={20} color={COLORS.success} strokeWidth={2} />
-              ) : (
+            {/* Add another deck button if user has uploaded deck and can upload more */}
+            {pitchDecks.length > 0 && canUploadPitchAssets && (
+              <TouchableOpacity
+                style={styles.addMaterialButton}
+                onPress={() => handlePitchNavigation('/(tabs)/pitch-upload')}
+                activeOpacity={0.7}>
+                <FileText size={20} color={COLORS.primary} strokeWidth={2} />
+                <Text style={styles.addMaterialText}>Add Another Pitch Deck</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Pitch Videos */}
+            {pitchVideos.length > 0 ? (
+              pitchVideos.map((video) => (
+                <View key={video.id} style={styles.materialCard}>
+                  <View style={styles.materialIcon}>
+                    <Video size={24} color={COLORS.success} strokeWidth={2} />
+                  </View>
+                  <View style={styles.materialInfo}>
+                    <Text style={styles.materialTitle}>{video.filename || 'Pitch Video'}</Text>
+                    <Text style={styles.materialStatus}>
+                      {video.visibility === 'public' ? 'Public' : 'Private'} • 
+                      {video.reviewed ? ' Reviewed' : ' Pending Review'}
+                    </Text>
+                  </View>
+                  <View style={styles.materialActions}>
+                    <TouchableOpacity
+                      onPress={() => handleViewPitchVideo(video.url)}
+                      style={styles.actionButton}>
+                      <ExternalLink size={20} color={COLORS.primary} strokeWidth={2} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleDeletePitchVideo(video.id, video.storage_path)}
+                      style={styles.actionButton}>
+                      <Trash2 size={20} color={COLORS.error} strokeWidth={2} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            ) : (
+              <TouchableOpacity
+                style={styles.materialCard}
+                onPress={() => handlePitchNavigation('/(tabs)/pitch-video')}
+                activeOpacity={0.7}>
+                <View style={styles.materialIcon}>
+                  <Video size={24} color={COLORS.primary} strokeWidth={2} />
+                </View>
+                <View style={styles.materialInfo}>
+                  <Text style={styles.materialTitle}>Pitch Video (2 min)</Text>
+                  <Text style={styles.materialStatus}>Not recorded</Text>
+                </View>
                 <Text style={styles.uploadLink}>Record</Text>
-              )}
-            </TouchableOpacity>
+              </TouchableOpacity>
+            )}
+
+            {/* Add another video button if user has uploaded video and can upload more */}
+            {pitchVideos.length > 0 && canUploadPitchAssets && (
+              <TouchableOpacity
+                style={styles.addMaterialButton}
+                onPress={() => handlePitchNavigation('/(tabs)/pitch-video')}
+                activeOpacity={0.7}>
+                <Video size={20} color={COLORS.primary} strokeWidth={2} />
+                <Text style={styles.addMaterialText}>Record Another Pitch Video</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -237,21 +799,21 @@ export default function StartupProfileScreen() {
           <Text style={styles.sectionTitle}>Social Links</Text>
           <View style={styles.socialLinks}>
             <View style={styles.socialLinkItem}>
-              <Link size={18} color={COLORS.primary} strokeWidth={2} />
+              <LinkIcon size={18} color={COLORS.primary} strokeWidth={2} />
               <Text style={styles.socialLinkText}>
-                {profile?.linkedin_url || 'LinkedIn not set'}
+                {linkedinUrl || 'LinkedIn not set'}
               </Text>
             </View>
             <View style={styles.socialLinkItem}>
-              <Link size={18} color={COLORS.primary} strokeWidth={2} />
+              <LinkIcon size={18} color={COLORS.primary} strokeWidth={2} />
               <Text style={styles.socialLinkText}>
-                {profile?.twitter_url || 'Twitter not set'}
+                {twitterUrl || 'Twitter not set'}
               </Text>
             </View>
             <View style={styles.socialLinkItem}>
-              <Link size={18} color={COLORS.primary} strokeWidth={2} />
+              <LinkIcon size={18} color={COLORS.primary} strokeWidth={2} />
               <Text style={styles.socialLinkText}>
-                {profile?.website_url || 'Website not set'}
+                {websiteUrl || 'Website not set'}
               </Text>
             </View>
           </View>
@@ -273,7 +835,7 @@ export default function StartupProfileScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.exportButton}
-            onPress={() => alert('Exporting profile as PDF...')}
+            onPress={handleExportPDF}
             activeOpacity={0.7}>
             <Download size={20} color={COLORS.primary} strokeWidth={2} />
             <Text style={styles.exportButtonText}>Export PDF</Text>
@@ -435,6 +997,29 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.caption,
     color: COLORS.textSecondary,
   },
+  materialActions: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+  },
+  actionButton: {
+    padding: SPACING.xs,
+  },
+  addMaterialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    padding: SPACING.md,
+    backgroundColor: COLORS.surface,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: COLORS.primary,
+  },
+  addMaterialText: {
+    ...TYPOGRAPHY.bodyStrong,
+    color: COLORS.primary,
+    fontFamily: FONT_FAMILY.bodyBold,
+  },
   uploadLink: {
     ...TYPOGRAPHY.bodyStrong,
     color: COLORS.primary,
@@ -507,6 +1092,10 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     marginTop: SPACING.md,
+  },
+  loadingState: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

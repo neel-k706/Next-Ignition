@@ -30,7 +30,7 @@ import {
   Filter,
   BarChart3,
 } from 'lucide-react-native';
-import { MOCK_PROFILE } from '@/hooks/useMockData';
+import { useAuth } from '@/contexts/AuthContext';
 
 const QUICK_STATS = [
   { label: 'Active Deals', value: '12', color: COLORS.primary },
@@ -58,7 +58,7 @@ const RECENT_PITCHES = [
 ];
 
 export default function InvestorDashboard() {
-  const profile = MOCK_PROFILE;
+  const { profile } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = async () => {
@@ -390,7 +390,8 @@ const styles = StyleSheet.create({
   actionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: SPACING.md,
+    justifyContent: 'space-between',
+    marginHorizontal: 0,
   },
   actionCard: {
     width: '48%',
@@ -402,6 +403,7 @@ const styles = StyleSheet.create({
     ...SHADOWS.sm,
     alignItems: 'center',
     gap: SPACING.sm,
+    marginBottom: SPACING.md,
   },
   actionTitle: {
     ...TYPOGRAPHY.bodyStrong,

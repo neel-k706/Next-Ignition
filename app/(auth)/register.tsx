@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -31,6 +32,7 @@ import {
 } from '@/utils/validation';
 import { Logo } from '@/components/Logo';
 import { ShieldCheck } from 'lucide-react-native';
+import Constants from 'expo-constants';
 
 export default function RegisterScreen() {
   const [email, setEmail] = useState('');
@@ -72,25 +74,22 @@ export default function RegisterScreen() {
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
+        options: {
+          emailRedirectTo:
+            Constants.expoConfig?.extra?.AUTH_REDIRECT_URL ||
+            `${Constants.expoConfig?.scheme ?? 'nextignition'}://auth/callback`,
+        },
       });
 
       if (error) throw error;
 
       if (data.user) {
-        const { error: profileError } = await supabase.from('profiles').insert([
-          {
-            id: data.user.id,
-            email: data.user.email,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ]);
-
-        if (profileError && profileError.code !== '23505') {
-          throw profileError;
-        }
-
-        router.replace('/(auth)/role-selection');
+        await supabase.auth.signOut();
+        Alert.alert(
+          'Verify your email',
+          'We have sent a confirmation link to your inbox. Please verify your email before signing in.',
+        );
+        router.replace('/(auth)/login');
       }
     } catch (err) {
       setGeneralError(

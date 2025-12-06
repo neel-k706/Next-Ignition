@@ -1,8 +1,11 @@
-import { Tabs } from 'expo-router';
-import { View, Text, StyleSheet, Platform } from 'react-native';
-import { Home, UsersRound, UserRound, MessageSquare, BarChart3, BriefcaseBusiness } from 'lucide-react-native';
+import { useEffect } from 'react';
+import { Tabs, router } from 'expo-router';
+import { View, Text, StyleSheet, Platform, ActivityIndicator } from 'react-native';
+import { Home, UsersRound, UserRound, MessageSquare, BarChart3, BriefcaseBusiness, Users } from 'lucide-react-native';
 import { useConversations } from '@/hooks/useChat';
+import { useAuth } from '@/contexts/AuthContext';
 import { COLORS, BORDER_RADIUS, FONT_SIZES, FONT_WEIGHTS, FONT_FAMILY } from '@/constants/theme';
+import type { UserRole } from '@/types/user';
 
 function ChatTabIcon({ size, color }: { size: number; color: string }) {
   const { totalUnread } = useConversations();
@@ -22,6 +25,26 @@ function ChatTabIcon({ size, color }: { size: number; color: string }) {
 }
 
 export default function TabLayout() {
+  const { session, loading, profile } = useAuth();
+  const userRole = profile?.role as UserRole | undefined;
+
+  useEffect(() => {
+    if (!loading && !session) {
+      router.replace('/(auth)/login');
+    }
+  }, [session, loading]);
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background }}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+      </View>
+    );
+  }
+
+  if (!session) {
+    return null;
+  }
   return (
     <Tabs
       screenOptions={{
@@ -133,9 +156,29 @@ export default function TabLayout() {
         options={{
           title: 'Funding',
           tabBarLabel: 'Funding',
+          // Show for founders and investors
+          href: (userRole === 'founder' || userRole === 'cofounder' || userRole === 'investor') ? '/funding' : null,
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
               <BarChart3 
+                size={24} 
+                color={focused ? COLORS.primary : color || COLORS.textSecondary} 
+                strokeWidth={2.5} 
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="mentorship"
+        options={{
+          title: 'Mentorship',
+          tabBarLabel: 'Find Experts',
+          // Show for founders and cofounders
+          href: (userRole === 'founder' || userRole === 'cofounder') ? '/mentorship' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <View style={styles.iconContainer}>
+              <Users 
                 size={24} 
                 color={focused ? COLORS.primary : color || COLORS.textSecondary} 
                 strokeWidth={2.5} 
@@ -149,6 +192,8 @@ export default function TabLayout() {
         options={{
           title: 'Opportunities',
           tabBarLabel: 'Opportunities',
+          // Show only for investors
+          href: userRole === 'investor' ? '/opportunities' : null,
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
               <BriefcaseBusiness 
@@ -243,7 +288,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="mentorship"
+        name="device-management"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="startup-detail"
         options={{
           href: null,
         }}

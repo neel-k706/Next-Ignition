@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -25,8 +26,7 @@ import {
 } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { validateEmail } from '@/utils/validation';
-import { useAuth } from '@/contexts/AuthContext';
-import { Zap, ShieldCheck, ChevronDown, ChevronUp, Copy, Check } from 'lucide-react-native';
+import { Zap, ShieldCheck } from 'lucide-react-native';
 import { Logo } from '@/components/Logo';
 
 const HERO_STATS = [
@@ -35,101 +35,18 @@ const HERO_STATS = [
   { label: 'Capital raised', value: '$180M' },
 ];
 
-// Test credentials for all user roles
-const TEST_CREDENTIALS = [
-  {
-    role: 'Founder',
-    email: 'founder@nextignition.com',
-    password: 'Founder123!',
-    description: 'Startup founder with Pro subscription',
-  },
-  {
-    role: 'Co-founder',
-    email: 'cofounder@nextignition.com',
-    password: 'CoFounder123!',
-    description: 'Co-founder with Elite subscription',
-  },
-  {
-    role: 'Investor',
-    email: 'investor@nextignition.com',
-    password: 'Investor123!',
-    description: 'Angel investor with Elite subscription',
-  },
-  {
-    role: 'Expert',
-    email: 'expert@nextignition.com',
-    password: 'Expert123!',
-    description: 'Business advisor with Pro subscription',
-  },
-  {
-    role: 'Admin',
-    email: 'admin@nextignition.com',
-    password: 'Admin123!',
-    description: 'Platform administrator',
-  },
-];
-
-// Test mode - bypasses Supabase
-const TEST_MODE = true;
-
 export default function LoginScreen() {
-  const { testLogin } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [generalError, setGeneralError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showTestCredentials, setShowTestCredentials] = useState(true); // Show by default
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-
-  const handleTestCredential = (credential: typeof TEST_CREDENTIALS[0]) => {
-    setEmail(credential.email);
-    setPassword(credential.password);
-    setEmailError('');
-    setPasswordError('');
-    setGeneralError('');
-    
-    // In test mode, auto-login immediately
-    if (TEST_MODE && testLogin) {
-      const role = credential.role.toLowerCase();
-      testLogin(role);
-      router.replace('/(tabs)');
-    }
-  };
-
-  const copyCredential = (credential: typeof TEST_CREDENTIALS[0], index: number) => {
-    const text = `Email: ${credential.email}\nPassword: ${credential.password}`;
-    // In a real app, you'd use Clipboard API
-    setCopiedIndex(index);
-    setTimeout(() => setCopiedIndex(null), 2000);
-  };
 
   const handleLogin = async () => {
     setEmailError('');
     setPasswordError('');
     setGeneralError('');
-
-    // Test mode - check if it's a test credential and bypass Supabase
-    if (TEST_MODE) {
-      const testCredential = TEST_CREDENTIALS.find(
-        (c) => c.email.toLowerCase() === email.trim().toLowerCase()
-      );
-      
-      if (testCredential && testCredential.password === password) {
-        setLoading(true);
-        // Small delay for UX
-        setTimeout(() => {
-          const role = testCredential.role.toLowerCase();
-          if (testLogin) {
-            testLogin(role);
-            router.replace('/(tabs)');
-          }
-          setLoading(false);
-        }, 500);
-        return;
-      }
-    }
 
     const emailValidation = validateEmail(email);
     if (!emailValidation.isValid) {
@@ -153,6 +70,17 @@ export default function LoginScreen() {
       if (error) throw error;
 
       if (data.user) {
+        if (!data.user.email_confirmed_at) {
+          setGeneralError('Please verify your email before signing in.');
+          Alert.alert(
+            'Verification required',
+            'Check your inbox for the confirmation link, then try signing in again.',
+          );
+          await supabase.auth.signOut();
+          setLoading(false);
+          return;
+        }
+
         const { data: profile } = await supabase
           .from('profiles')
           .select('role')
@@ -263,93 +191,6 @@ export default function LoginScreen() {
             <View style={styles.securityCallout}>
               <ShieldCheck size={16} color={COLORS.primary} />
               <Text style={styles.securityText}>Enterprise-grade authentication secured by Supabase</Text>
-            </View>
-
-            {/* Test Credentials Section */}
-            <View style={styles.testCredentialsSection}>
-              <TouchableOpacity
-                style={styles.testCredentialsHeader}
-                onPress={() => setShowTestCredentials(!showTestCredentials)}
-                activeOpacity={0.7}>
-                <View style={styles.testCredentialsHeaderLeft}>
-                  <Text style={styles.testCredentialsTitle}>🧪 Test Credentials</Text>
-                  <Text style={styles.testCredentialsSubtitle}>
-                    Click to auto-fill login form
-                  </Text>
-                </View>
-                {showTestCredentials ? (
-                  <ChevronUp size={20} color={COLORS.textSecondary} />
-                ) : (
-                  <ChevronDown size={20} color={COLORS.textSecondary} />
-                )}
-              </TouchableOpacity>
-
-              {showTestCredentials && (
-                <View style={styles.testCredentialsList}>
-                  {TEST_CREDENTIALS.map((credential, index) => (
-                    <View key={credential.role} style={styles.testCredentialCard}>
-                      <TouchableOpacity
-                        style={styles.testCredentialContent}
-                        onPress={() => handleTestCredential(credential)}
-                        activeOpacity={0.7}>
-                        <View style={styles.testCredentialInfo}>
-                          <View style={styles.testCredentialHeader}>
-                            <Text style={styles.testCredentialRole}>{credential.role}</Text>
-                            <View
-                              style={[
-                                styles.testCredentialBadge,
-                                credential.role === 'Admin' && styles.testCredentialBadgeAdmin,
-                                credential.role === 'Investor' && styles.testCredentialBadgeInvestor,
-                                credential.role === 'Expert' && styles.testCredentialBadgeExpert,
-                              ]}>
-                              <Text style={styles.testCredentialBadgeText}>
-                                {credential.role === 'Admin'
-                                  ? 'Admin'
-                                  : credential.role === 'Investor'
-                                  ? 'Elite'
-                                  : credential.role === 'Expert'
-                                  ? 'Pro'
-                                  : credential.role === 'Co-founder'
-                                  ? 'Elite'
-                                  : 'Pro'}
-                              </Text>
-                            </View>
-                          </View>
-                          <Text style={styles.testCredentialDescription}>
-                            {credential.description}
-                          </Text>
-                          <View style={styles.testCredentialDetails}>
-                            <Text style={styles.testCredentialEmail}>
-                              📧 {credential.email}
-                            </Text>
-                            <Text style={styles.testCredentialPassword}>
-                              🔒 {credential.password}
-                            </Text>
-                          </View>
-                        </View>
-                        <TouchableOpacity
-                          style={styles.copyButton}
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            copyCredential(credential, index);
-                          }}
-                          activeOpacity={0.7}>
-                          {copiedIndex === index ? (
-                            <Check size={16} color={COLORS.success} />
-                          ) : (
-                            <Copy size={16} color={COLORS.primary} />
-                          )}
-                        </TouchableOpacity>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                  <View style={styles.testCredentialsNote}>
-                    <Text style={styles.testCredentialsNoteText}>
-                      💡 These are test accounts for development. Tap any credential to auto-fill the form above.
-                    </Text>
-                  </View>
-                </View>
-              )}
             </View>
 
             <View style={styles.footer}>
@@ -513,128 +354,5 @@ const styles = StyleSheet.create({
   footerLink: {
     ...TYPOGRAPHY.bodyStrong,
     color: COLORS.primary,
-  },
-  testCredentialsSection: {
-    marginTop: SPACING.md,
-    marginBottom: SPACING.md,
-    borderRadius: BORDER_RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surfaceMuted,
-    overflow: 'hidden',
-  },
-  testCredentialsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: SPACING.md,
-    backgroundColor: COLORS.surface,
-  },
-  testCredentialsHeaderLeft: {
-    flex: 1,
-  },
-  testCredentialsTitle: {
-    ...TYPOGRAPHY.bodyStrong,
-    fontFamily: FONT_FAMILY.bodyBold,
-    color: COLORS.text,
-    marginBottom: SPACING.xs / 2,
-  },
-  testCredentialsSubtitle: {
-    ...TYPOGRAPHY.caption,
-    color: COLORS.textSecondary,
-  },
-  testCredentialsList: {
-    padding: SPACING.md,
-    gap: SPACING.sm,
-  },
-  testCredentialCard: {
-    borderRadius: BORDER_RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-    overflow: 'hidden',
-  },
-  testCredentialContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: SPACING.md,
-    gap: SPACING.md,
-  },
-  testCredentialInfo: {
-    flex: 1,
-    gap: SPACING.xs,
-  },
-  testCredentialHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.sm,
-    marginBottom: SPACING.xs / 2,
-  },
-  testCredentialRole: {
-    ...TYPOGRAPHY.bodyStrong,
-    fontFamily: FONT_FAMILY.bodyBold,
-    color: COLORS.text,
-    fontSize: FONT_SIZES.md,
-  },
-  testCredentialBadge: {
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: SPACING.xs / 2,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: COLORS.primaryLight,
-  },
-  testCredentialBadgeAdmin: {
-    backgroundColor: COLORS.error + '20',
-  },
-  testCredentialBadgeInvestor: {
-    backgroundColor: COLORS.accentLight,
-  },
-  testCredentialBadgeExpert: {
-    backgroundColor: COLORS.primaryLight,
-  },
-  testCredentialBadgeText: {
-    ...TYPOGRAPHY.label,
-    fontSize: FONT_SIZES.xs,
-    color: COLORS.primary,
-    fontFamily: FONT_FAMILY.bodyBold,
-  },
-  testCredentialDescription: {
-    ...TYPOGRAPHY.caption,
-    color: COLORS.textSecondary,
-    marginBottom: SPACING.xs,
-  },
-  testCredentialDetails: {
-    gap: SPACING.xs / 2,
-    marginTop: SPACING.xs,
-  },
-  testCredentialEmail: {
-    ...TYPOGRAPHY.caption,
-    fontFamily: FONT_FAMILY.bodyMedium,
-    color: COLORS.text,
-    fontSize: FONT_SIZES.xs,
-  },
-  testCredentialPassword: {
-    ...TYPOGRAPHY.caption,
-    fontFamily: FONT_FAMILY.bodyMedium,
-    color: COLORS.textSecondary,
-    fontSize: FONT_SIZES.xs,
-  },
-  copyButton: {
-    padding: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: COLORS.surfaceMuted,
-  },
-  testCredentialsNote: {
-    marginTop: SPACING.sm,
-    padding: SPACING.md,
-    borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: COLORS.primaryLight + '30',
-    borderLeftWidth: 3,
-    borderLeftColor: COLORS.primary,
-  },
-  testCredentialsNoteText: {
-    ...TYPOGRAPHY.caption,
-    color: COLORS.textSecondary,
-    fontSize: FONT_SIZES.xs,
-    lineHeight: 18,
   },
 });

@@ -7,12 +7,17 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Platform,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Input } from '@/components/Input';
 import { Button } from '@/components/Button';
 import { Picker } from '@/components/Picker';
+import { useMeetings } from '@/hooks/useMeetings';
+import { showAlert } from '@/utils/platformAlert';
 import {
   BORDER_RADIUS,
   COLORS,
@@ -33,34 +38,130 @@ import {
   CheckCircle,
 } from 'lucide-react-native';
 
-const DURATION_OPTIONS = ['30 minutes', '1 hour', '1.5 hours', '2 hours'];
-const MEETING_TYPES = ['Video Call', 'Phone Call', 'In-Person', 'Hybrid'];
+const DURATION_OPTIONS = [
+  { label: '30 minutes', value: 30 },
+  { label: '1 hour', value: 60 },
+  { label: '1.5 hours', value: 90 },
+  { label: '2 hours', value: 120 },
+];
 
 export default function ScheduleMeetingScreen() {
   const params = useLocalSearchParams();
+  const { scheduleMeeting, loading } = useMeetings();
+  
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
-  const [duration, setDuration] = useState(DURATION_OPTIONS[1]);
-  const [meetingType, setMeetingType] = useState(MEETING_TYPES[0]);
-  const [location, setLocation] = useState('');
-  const [participants, setParticipants] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [participantEmail, setParticipantEmail] = useState((params.email as string) || '');
+  const [date, setDate] = useState(new Date());
+  const [time, setTime] = useState(new Date());
+  const [duration, setDuration] = useState(60);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+
+  const formatDate = (date: Date) => {
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  };
+
+  const formatTime = (time: Date) => {
+    return time.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const handleDateChange = (event: any, selectedDate?: Date) => {
+    setShowDatePicker(Platform.OS === 'ios');
+    if (selectedDate) {
+      setDate(selectedDate);
+    }
+  };
+
+  const handleTimeChange = (event: any, selectedTime?: Date) => {
+    setShowTimePicker(Platform.OS === 'ios');
+    if (selectedTime) {
+      setTime(selectedTime);
+    }
+  };
 
   const handleSchedule = async () => {
-    if (!title || !date || !time) {
-      Alert.alert('Required Fields', 'Please fill in title, date, and time');
+    // Validation
+    if (!title.trim()) {
+      showAlert('Required Field', 'Please enter a meeting title');
       return;
     }
 
-    setSaving(true);
-    setTimeout(() => {
-      setSaving(false);
-      Alert.alert('Success', 'Meeting scheduled successfully!', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
-    }, 1500);
+    if (!participantEmail.trim()) {
+      showAlert('Required Field', 'Please enter participant email address');
+      return;
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(participantEmail)) {
+      showAlert('Invalid Email', 'Please enter a valid email address');
+      return;
+    }
+
+    // Combine date and time
+    const scheduledDateTime = new Date(date);
+    scheduledDateTime.setHours(time.getHours());
+    scheduledDateTime.setMinutes(time.getMinutes());
+    scheduledDateTime.setSeconds(0);
+    scheduledDateTime.setMilliseconds(0);
+
+    // Check if meeting is in the past
+    if (scheduledDateTime < new Date()) {
+      showAlert('Invalid Date', 'Meeting time must be in the future');
+      return;
+    }
+
+    try {
+      const result = await scheduleMeeting({
+        title: title.trim(),
+        description: description.trim() || undefined,
+        participantEmail: participantEmail.trim(),
+        scheduledAt: scheduledDateTime.toISOString(),
+        duration,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+
+      if (result.success) {
+        const emailNote = result.emailSent 
+          ? '📧 Email invitation sent' 
+          : '⚠️ Email not sent - please share the link manually';
+        
+        showAlert(
+          'Meeting Scheduled! 🎉',
+          `Your meeting has been scheduled successfully!\n\n` +
+          `📅 ${formatDate(scheduledDateTime)} at ${formatTime(scheduledDateTime)}\n` +
+          `👥 With ${participantEmail}\n\n` +
+          `${emailNote}\n\n` +
+          `Meeting Link:\n${result.meetLink}`,
+          [
+            {
+              text: 'Copy Link',
+              onPress: async () => {
+                await Clipboard.setStringAsync(result.meetLink);
+                showAlert('Link Copied!', 'Meeting link has been copied to clipboard. Share it with the participant.');
+              },
+            },
+            {
+              text: 'OK',
+              onPress: () => router.back(),
+            },
+          ]
+        );
+      } else {
+        showAlert('Error', result.error || 'Failed to schedule meeting');
+      }
+    } catch (error: any) {
+      console.error('Error scheduling meeting:', error);
+      showAlert('Error', error.message || 'Failed to schedule meeting');
+    }
   };
 
   return (
@@ -76,7 +177,7 @@ export default function ScheduleMeetingScreen() {
             <View style={styles.heroText}>
               <Text style={styles.heroTitle}>Schedule Meeting</Text>
               <Text style={styles.heroSubtitle}>
-                Set up a meeting with your connections
+                Video call link will be generated automatically
               </Text>
             </View>
           </View>
@@ -92,112 +193,91 @@ export default function ScheduleMeetingScreen() {
             icon={<Calendar size={20} color={COLORS.textSecondary} strokeWidth={2} />}
           />
           <Input
-            label="Description"
+            label="Description (Optional)"
             value={description}
             onChangeText={setDescription}
             placeholder="Brief description of the meeting agenda..."
             multiline
             numberOfLines={4}
+            icon={<MessageSquare size={20} color={COLORS.textSecondary} strokeWidth={2} />}
+          />
+          <Input
+            label="Participant Email"
+            value={participantEmail}
+            onChangeText={setParticipantEmail}
+            placeholder="participant@example.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            icon={<Users size={20} color={COLORS.textSecondary} strokeWidth={2} />}
           />
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Date & Time</Text>
-          <Input
-            label="Date"
-            value={date}
-            onChangeText={setDate}
-            placeholder="YYYY-MM-DD or tap to select"
-            icon={<Calendar size={20} color={COLORS.textSecondary} strokeWidth={2} />}
-          />
-          <Input
-            label="Time"
-            value={time}
-            onChangeText={setTime}
-            placeholder="2:00 PM or tap to select"
-            icon={<Clock size={20} color={COLORS.textSecondary} strokeWidth={2} />}
-          />
+          
+          <TouchableOpacity
+            style={styles.dateTimeButton}
+            onPress={() => setShowDatePicker(true)}>
+            <Calendar size={20} color={COLORS.primary} strokeWidth={2} />
+            <Text style={styles.dateTimeText}>{formatDate(date)}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.dateTimeButton}
+            onPress={() => setShowTimePicker(true)}>
+            <Clock size={20} color={COLORS.primary} strokeWidth={2} />
+            <Text style={styles.dateTimeText}>{formatTime(time)}</Text>
+          </TouchableOpacity>
+
+          {showDatePicker && (
+            <DateTimePicker
+              value={date}
+              mode="date"
+              display="default"
+              onChange={handleDateChange}
+              minimumDate={new Date()}
+            />
+          )}
+
+          {showTimePicker && (
+            <DateTimePicker
+              value={time}
+              mode="time"
+              display="default"
+              onChange={handleTimeChange}
+            />
+          )}
+
           <View style={styles.pickerContainer}>
-            <Text style={styles.pickerLabel}>Duration</Text>
+            <Text style={styles.label}>Duration</Text>
             <Picker
-              value={duration}
-              onValueChange={setDuration}
-              items={DURATION_OPTIONS}
+              items={DURATION_OPTIONS.map(opt => ({ label: opt.label, value: opt.value.toString() }))}
+              selectedValue={duration.toString()}
+              onValueChange={(value) => setDuration(parseInt(value))}
               placeholder="Select duration"
             />
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Meeting Type</Text>
-          <View style={styles.meetingTypes}>
-            {MEETING_TYPES.map((type) => (
-              <TouchableOpacity
-                key={type}
-                style={[
-                  styles.meetingTypeCard,
-                  meetingType === type && styles.meetingTypeCardActive,
-                ]}
-                onPress={() => setMeetingType(type)}
-                activeOpacity={0.7}>
-                {type === 'Video Call' && (
-                  <Video size={20} color={meetingType === type ? COLORS.primary : COLORS.textSecondary} strokeWidth={2} />
-                )}
-                {type === 'Phone Call' && (
-                  <MessageSquare size={20} color={meetingType === type ? COLORS.primary : COLORS.textSecondary} strokeWidth={2} />
-                )}
-                {type === 'In-Person' && (
-                  <MapPin size={20} color={meetingType === type ? COLORS.primary : COLORS.textSecondary} strokeWidth={2} />
-                )}
-                {type === 'Hybrid' && (
-                  <Users size={20} color={meetingType === type ? COLORS.primary : COLORS.textSecondary} strokeWidth={2} />
-                )}
-                <Text
-                  style={[
-                    styles.meetingTypeText,
-                    meetingType === type && styles.meetingTypeTextActive,
-                  ]}>
-                  {type}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          {meetingType === 'In-Person' && (
-            <Input
-              label="Location"
-              value={location}
-              onChangeText={setLocation}
-              placeholder="Enter meeting location"
-              icon={<MapPin size={20} color={COLORS.textSecondary} strokeWidth={2} />}
-            />
-          )}
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Participants</Text>
-          <Input
-            label="Participants (optional)"
-            value={participants}
-            onChangeText={setParticipants}
-            placeholder="Add participant emails (comma-separated)"
-            icon={<Users size={20} color={COLORS.textSecondary} strokeWidth={2} />}
-          />
+        <View style={styles.infoCard}>
+          <Video size={20} color={COLORS.primary} strokeWidth={2} />
+          <Text style={styles.infoText}>
+            A secure video call link will be automatically generated and sent to both participants via email
+          </Text>
         </View>
 
         <View style={styles.infoCard}>
           <CheckCircle size={20} color={COLORS.success} strokeWidth={2} />
           <Text style={styles.infoText}>
-            Meeting invitations will be sent to all participants. Calendar invites will be
-            generated automatically.
+            Calendar invites will be sent automatically with meeting details
           </Text>
         </View>
 
         <Button
-          title="Schedule Meeting"
+          title={loading ? 'Scheduling...' : 'Schedule Meeting'}
           onPress={handleSchedule}
-          loading={saving}
-          disabled={saving || !title || !date || !time}
-          style={styles.scheduleButton}
+          loading={loading}
+          style={styles.saveButton}
         />
       </ScrollView>
     </SafeAreaView>
@@ -307,6 +387,34 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     flex: 1,
     lineHeight: 20,
+  },
+  dateTimeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    padding: SPACING.md,
+    backgroundColor: COLORS.surface,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: SPACING.md,
+  },
+  dateTimeText: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.text,
+    flex: 1,
+  },
+  pickerContainer: {
+    marginTop: SPACING.sm,
+  },
+  label: {
+    ...TYPOGRAPHY.bodySm,
+    fontWeight: '600',
+    color: COLORS.text,
+    marginBottom: SPACING.xs,
+  },
+  saveButton: {
+    marginTop: SPACING.md,
   },
   scheduleButton: {
     marginTop: SPACING.sm,

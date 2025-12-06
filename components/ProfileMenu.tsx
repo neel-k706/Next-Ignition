@@ -84,11 +84,15 @@ export function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
 
   const handleItemPress = (item: typeof menuItems[0]) => {
     onClose();
-    if (item.action) {
-      item.action();
-    } else if (item.route) {
-      router.push(item.route);
-    }
+    
+    // Prevent redundant navigation - use setTimeout to ensure modal closes first
+    setTimeout(() => {
+      if (item.action) {
+        item.action();
+      } else if (item.route) {
+        router.push(item.route);
+      }
+    }, 100);
   };
 
   return (

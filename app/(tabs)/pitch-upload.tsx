@@ -8,10 +8,15 @@ import {
   TouchableOpacity,
   Alert,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
-// import * as DocumentPicker from 'expo-document-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { router } from 'expo-router';
 import { Button } from '@/components/Button';
+import { useAuth } from '@/contexts/AuthContext';
+import { useSubscription } from '@/hooks/useSubscription';
+import { usePitchMaterials } from '@/hooks/usePitchMaterials';
+import { showAlert } from '@/utils/platformAlert';
 import {
   BORDER_RADIUS,
   COLORS,
@@ -21,52 +26,147 @@ import {
   SPACING,
   TYPOGRAPHY,
 } from '@/constants/theme';
-import { Upload, FileText, CheckCircle, X, Eye, EyeOff } from 'lucide-react-native';
+import { Upload, FileText, CheckCircle, X, Eye, EyeOff, AlertCircle } from 'lucide-react-native';
+
+interface PickedDocument {
+  name: string;
+  uri: string;
+  size?: number;
+  mimeType?: string;
+}
 
 export default function PitchUploadScreen() {
-  const [pitchDeck, setPitchDeck] = useState<{ name: string; uri: string } | null>(null);
+  const { user, profile } = useAuth();
+  const { permissions, currentPlan } = useSubscription();
+  const { uploadPitchMaterial, pitchDecks, refresh } = usePitchMaterials();
+  
+  const [pitchDeck, setPitchDeck] = useState<PickedDocument | null>(null);
   const [visibility, setVisibility] = useState<'public' | 'private'>('public');
   const [uploading, setUploading] = useState(false);
 
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
   const handlePickDocument = async () => {
     try {
-      // Simulate document picker for now
-      // In production, use: import * as DocumentPicker from 'expo-document-picker';
-      Alert.alert(
-        'Document Picker',
-        'Select a PDF file',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Select Sample',
-            onPress: () => {
-              setPitchDeck({
-                name: 'Pitch_Deck_Sample.pdf',
-                uri: 'file://sample.pdf',
-              });
-            },
-          },
-        ]
-      );
+      // Check permissions first
+      if (!permissions.canUploadPitchDeck) {
+        showAlert(
+          'Upgrade Required',
+          `Pitch deck upload is available for ${currentPlan?.name || 'Pro'} plan and above. Upgrade to unlock this feature.`
+        );
+        return;
+      }
+
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      const file = result.assets[0];
+
+      // Check file size
+      if (file.size && file.size > MAX_FILE_SIZE) {
+        showAlert(
+          'File Too Large',
+          'Please select a PDF file smaller than 10MB.'
+        );
+        return;
+      }
+
+      // Validate file type
+      if (file.mimeType && file.mimeType !== 'application/pdf') {
+        showAlert(
+          'Invalid File Type',
+          'Please select a PDF file.'
+        );
+        return;
+      }
+
+      setPitchDeck({
+        name: file.name,
+        uri: file.uri,
+        size: file.size,
+        mimeType: file.mimeType,
+      });
     } catch (error) {
-      Alert.alert('Error', 'Failed to pick document');
+      console.error('Error picking document:', error);
+      showAlert('Error', 'Failed to pick document. Please try again.');
     }
   };
 
   const handleUpload = async () => {
     if (!pitchDeck) {
-      Alert.alert('Error', 'Please select a pitch deck');
+      showAlert('Error', 'Please select a pitch deck PDF file first.');
       return;
     }
 
-    setUploading(true);
-    // Simulate upload
-    setTimeout(() => {
+    if (!user?.id) {
+      showAlert('Error', 'You must be logged in to upload a pitch deck.');
+      return;
+    }
+
+    try {
+      setUploading(true);
+
+      // Upload to Supabase
+      // On mobile: pass the URI string directly (usePitchMaterials handles file reading)
+      // On web: fetch and convert to blob first
+      let fileToUpload: File | Blob | string;
+      
+      if (Platform.OS === 'web') {
+        // On web, fetch and convert to blob
+        const response = await fetch(pitchDeck.uri);
+        fileToUpload = await response.blob();
+      } else {
+        // On mobile, pass the URI string directly
+        // The usePitchMaterials hook will read the file using expo-file-system
+        fileToUpload = pitchDeck.uri;
+      }
+
+      const result = await uploadPitchMaterial(
+        'deck',
+        fileToUpload,
+        pitchDeck.name,
+        visibility
+      );
+
+      if (result.success) {
+        showAlert(
+          'Success',
+          'Your pitch deck has been uploaded successfully!',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                refresh();
+                router.back();
+              },
+            },
+          ]
+        );
+      } else {
+        throw new Error(result.error || 'Upload failed');
+      }
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      showAlert(
+        'Upload Failed',
+        error.message || 'Failed to upload pitch deck. Please try again.'
+      );
+    } finally {
       setUploading(false);
-      Alert.alert('Success', 'Pitch deck uploaded successfully!', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
-    }, 2000);
+    }
+  };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return 'Unknown size';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   return (
@@ -81,15 +181,27 @@ export default function PitchUploadScreen() {
           </Text>
         </View>
 
+        {/* Permission Notice */}
+        {!permissions.canUploadPitchDeck && (
+          <View style={styles.warningCard}>
+            <AlertCircle size={20} color={COLORS.warning} strokeWidth={2} />
+            <Text style={styles.warningText}>
+              Pitch deck uploads require a Pro plan or higher
+            </Text>
+          </View>
+        )}
+
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Pitch Deck</Text>
+          <Text style={styles.sectionTitle}>Select Pitch Deck</Text>
           {pitchDeck ? (
             <View style={styles.fileCard}>
               <View style={styles.fileInfo}>
                 <FileText size={24} color={COLORS.primary} strokeWidth={2} />
                 <View style={styles.fileDetails}>
                   <Text style={styles.fileName}>{pitchDeck.name}</Text>
-                  <Text style={styles.fileSize}>PDF Document</Text>
+                  <Text style={styles.fileSize}>
+                    PDF • {formatFileSize(pitchDeck.size)}
+                  </Text>
                 </View>
               </View>
               <TouchableOpacity
@@ -196,6 +308,21 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     ...TYPOGRAPHY.body,
     color: COLORS.textSecondary,
+  },
+  warningCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    padding: SPACING.md,
+    backgroundColor: COLORS.warning + '15',
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.warning + '30',
+  },
+  warningText: {
+    ...TYPOGRAPHY.body,
+    color: COLORS.text,
+    flex: 1,
   },
   section: {
     gap: SPACING.md,

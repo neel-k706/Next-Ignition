@@ -34,6 +34,7 @@ import {
   TrendingUp,
 } from 'lucide-react-native';
 import { MOCK_PROFILE } from '@/hooks/useMockData';
+import { useAuth } from '@/contexts/AuthContext';
 
 const INVESTMENT_FOCUS_OPTIONS = [
   'Seed Stage',
@@ -55,7 +56,7 @@ const PORTFOLIO_COMPANIES = [
 ];
 
 export default function InvestorProfileScreen() {
-  const profile = MOCK_PROFILE;
+  const { profile } = useAuth();
   const [fundName, setFundName] = useState('Venture Capital Partners');
   const [companyInfo, setCompanyInfo] = useState('Leading early-stage VC fund');
   const [investmentFocus, setInvestmentFocus] = useState<string[]>(['Seed Stage', 'B2B SaaS']);

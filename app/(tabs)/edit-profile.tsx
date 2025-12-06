@@ -11,15 +11,16 @@ import {
   Alert,
 } from 'react-native';
 import { router } from 'expo-router';
-import { MOCK_PROFILE } from '@/hooks/useMockData';
+import { useAuth } from '@/contexts/AuthContext';
 import { Input } from '@/components/Input';
 import { Button } from '@/components/Button';
 import { RoleSpecificFields } from '@/components/RoleSpecificFields';
 import { COLORS, SPACING, FONT_SIZES, FONT_WEIGHTS } from '@/constants/theme';
 import { ArrowLeft } from 'lucide-react-native';
+import { supabase } from '@/lib/supabase';
 
 export default function EditProfileScreen() {
-  const profile = MOCK_PROFILE;
+  const { profile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [fullName, setFullName] = useState('');
   const [location, setLocation] = useState('');
@@ -93,30 +94,62 @@ export default function EditProfileScreen() {
       return;
     }
 
+    if (!profile?.id) {
+      Alert.alert('Error', 'User profile not found');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Build the update data object based on role
+      const updateData: any = {
+        full_name: fullName.trim(),
+        location: location.trim(),
+        bio: bio.trim(),
+        linkedin_url: linkedinUrl.trim() || null,
+        twitter_url: twitterUrl.trim() || null,
+        website_url: websiteUrl.trim() || null,
+        updated_at: new Date().toISOString(),
+      };
 
-      console.log('Profile saved:', {
-        fullName,
-        location,
-        bio,
-        linkedinUrl,
-        twitterUrl,
-        websiteUrl,
-        founderValues,
-        investorValues,
-        expertValues,
-      });
+      // Add role-specific fields
+      if (profile.role === 'founder') {
+        updateData.venture_name = founderValues.ventureName.trim() || null;
+        updateData.venture_description = founderValues.ventureDescription.trim() || null;
+        updateData.venture_industry = founderValues.ventureIndustry.trim() || null;
+        updateData.venture_stage = founderValues.ventureStage.trim() || null;
+      } else if (profile.role === 'investor') {
+        updateData.investment_focus = investorValues.investmentFocus.trim() || null;
+        updateData.investment_range = investorValues.investmentRange.trim() || null;
+        updateData.portfolio_size = investorValues.portfolioSize.trim() || null;
+      } else if (profile.role === 'expert') {
+        updateData.years_experience = expertValues.yearsExperience.trim() 
+          ? parseInt(expertValues.yearsExperience) 
+          : null;
+        updateData.hourly_rate = expertValues.hourlyRate.trim() 
+          ? parseFloat(expertValues.hourlyRate) 
+          : null;
+        updateData.expertise_areas = expertValues.expertiseAreas.trim()
+          ? expertValues.expertiseAreas.split(',').map(area => area.trim()).filter(Boolean)
+          : null;
+      }
+
+      // Update the profile in Supabase
+      const { error } = await supabase
+        .from('profiles')
+        .update(updateData)
+        .eq('id', profile.id);
+
+      if (error) throw error;
 
       Alert.alert(
         'Success',
         'Profile updated successfully!',
         [{ text: 'OK', onPress: () => router.back() }]
       );
-    } catch (error) {
-      Alert.alert('Error', 'Failed to update profile. Please try again.');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update profile. Please try again.');
       console.error('Save error:', error);
     } finally {
       setLoading(false);
